@@ -1,180 +1,75 @@
-// 1. INICIALIZACIÓN Y CONFIGURACIÓN VIA CONFIG.JS
-firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
+  // ================================================================
+    // FIREBASE AUTHENTICATION + FIRESTORE
+    // ================================================================
+    // INSTRUCCIONES:
+    //   1. Entrá a console.firebase.google.com
+    //   2. Habilitá Authentication → Sign-in method → Email/Contraseña
+    //   3. Habilitá Firestore Database → Crear base de datos → Modo prueba
+    //   4. En ⚙️ Configuración → Tus apps → Web → copiá firebaseConfig
+    //   5. Pegá los valores reales abajo reemplazando los "TU_..."
+    //
+    // ¿Cómo funciona el rol admin?
+    //   - Al registrarte → Firestore guarda { nombre, email, rol: "user" }
+    //   - Para hacer admin a alguien: en Firestore Console, abrí la colección
+    //     "usuarios" → buscá el documento con el UID → cambiá "rol" a "admin"
+    //   - La próxima vez que ese usuario inicie sesión, la app lee "admin" de
+    //     Firestore y lo trata como admin automáticamente, en cualquier dispositivo
+    // ================================================================
 
-// 2. REFERENCIAS DEL DOM (Elementos de la Interfaz)
-const modal = document.getElementById("modal-detalle");
-const btnClose = document.querySelector(".close-button");
-const contenedor = document.getElementById('contenedor-productos');
-const tituloApp = document.getElementById('titulo-app');
-const btnLike = document.getElementById("btn-like");
-const buscador = document.getElementById('input-buscador');
-const contenedorDestacados = document.getElementById('contenedor-destacados');
-const btnAnadirCarrito = document.querySelector("#modal-detalle .btn-comprar");
-const modalAgregar = document.getElementById('modal-agregar');
+    import { initializeApp }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
+             signOut, onAuthStateChanged, updateProfile,
+             setPersistence, browserSessionPersistence }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+    import { getFirestore, doc, setDoc, getDoc }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-// Variables de control de estado (State Management)
-let productoActualId = null;
-let todosLosProductos = []; 
-let carrito = JSON.parse(localStorage.getItem('carrito')) || [];
-let firebaseListener = null; 
-let categoriaActual = null;
+    // ── Pegá acá tu firebaseConfig ──
+    const firebaseConfig = {
+      apiKey:            "AIzaSyDYhZSsmbin4UQQszXQ6oE7M9N6TncE_Mk",
+      authDomain:        "barberia-8bb25.firebaseapp.com",
+      projectId:         "barberia-8bb25",
+      storageBucket:     "barberia-8bb25.firebasestorage.app",
+      messagingSenderId: "890840367860",
+      appId:             "1:890840367860:web:d47bb51f456b373a0a94a1",
+      measurementId:     "G-Q3WNQ5B00C"
+    };
 
-// 3. CONTROL DE VISTAS (Navegación SPA)
-function cambiarPantalla(pantalla) {
-    const vistas = ['inicio', 'productos', 'carrito'];
-    vistas.forEach(v => {
-        const viewEl = document.getElementById(`view-${v}`);
-        if (viewEl) viewEl.style.display = 'none';
-    });
-    
-    const btnAgregar = document.getElementById('btn-agregar-flotante');
-    if (btnAgregar) btnAgregar.style.display = 'none';
-    
-    const vistaActiva = document.getElementById(`view-${pantalla === 'favoritos' ? 'productos' : pantalla}`);
-    if (vistaActiva) vistaActiva.style.display = 'block';
+    const isConfigured = firebaseConfig.apiKey && !firebaseConfig.apiKey.startsWith("TU_");
 
-    switch (pantalla) {
-        case 'inicio':
-            tituloApp.innerText = "Mi Tienda";
-            if (buscador) buscador.value = "";
-            break;
-        case 'productos':
-            tituloApp.innerText = "Todos los productos";
-            cargarProductos(); 
-            break;
-        case 'favoritos':
-            tituloApp.innerText = "Mis Favoritos ❤️";
-            cargarProductos("favoritos");
-            break;
-        case 'carrito':
-            tituloApp.innerText = "Mi Carrito";
-            actualizarVistaCarrito();
-            break;
-    }
-}
+    if(!isConfigured){
+      console.warn('[Firebase] ⚠ firebaseConfig no configurado — la app funciona en modo local');
+    } else {
 
-function filtrarCategoria(cat) {
-    categoriaActual = cat;
-    cambiarPantalla('productos');
-    
-    const btnAgregar = document.getElementById('btn-agregar-flotante');
-    if (btnAgregar) btnAgregar.style.display = 'flex';
-    
-    cargarProductos(cat); 
-}
+      const app  = initializeApp(firebaseConfig);
+      const auth = getAuth(app);
+      const db   = getFirestore(app);
 
-// 4. LOGICA DE PRODUCTOS (Firestore Integration)
-function cargarProductos(tipo = null) {
-    if (firebaseListener) firebaseListener(); // Desvincular listener anterior para optimizar memoria
-
-    let consulta = db.collection("productos");
-    
-    if (tipo === "favoritos") {
-        consulta = consulta.where("likes", ">", 0).orderBy("likes", "desc");
-    } else if (tipo) {
-        consulta = consulta.where("categoria", "==", tipo);
-        tituloApp.innerText = "Categoría: " + tipo.charAt(0).toUpperCase() + tipo.slice(1);
-    }
-
-    firebaseListener = consulta.onSnapshot((snapshot) => {
-        contenedor.innerHTML = '';
-        if (snapshot.empty) {
-            contenedor.innerHTML = '<p class="sin-datos">No hay productos disponibles en esta sección.</p>';
-            return;
+      // ── Leer perfil del usuario desde Firestore ──
+      // Devuelve { username, role, uid, email } o null si no existe el doc
+      async function loadUserProfile(fbUser){
+        try {
+          const snap = await getDoc(doc(db, 'usuarios', fbUser.uid));
+          if(snap.exists()){
+            const data = snap.data();
+            return {
+              username: data.nombre || fbUser.displayName || fbUser.email.split('@')[0],
+              role:     data.rol    || 'user',
+              uid:      fbUser.uid,
+              email:    fbUser.email
+            };
+          }
+        } catch(e){
+          console.warn('[Firestore] No se pudo leer el perfil:', e.message);
         }
-
-        snapshot.forEach((doc) => {
-            const data = doc.data();
-            const id = doc.id;
-            
-            if (!todosLosProductos.find(p => p.id === id)) {
-                todosLosProductos.push({ id, ...data });
-            }
-            renderizarCard(id, data);
-        });
-    }, error => console.error("Error en tiempo real: ", error));
-}
-
-function cargarDestacados() {
-    if (!contenedorDestacados) return;
-
-    db.collection("productos")
-        .where("likes", ">", 0)
-        .orderBy("likes", "desc")
-        .limit(5)
-        .onSnapshot((snapshot) => {
-            contenedorDestacados.innerHTML = '';
-
-            if (snapshot.empty) {
-                contenedorDestacados.innerHTML = '<p class="destacados-vacios">Interactúa con los productos para ver tendencias.</p>';
-                return;
-            }
-
-            snapshot.forEach((doc) => {
-                const data = doc.data();
-                const id = doc.id;
-                const card = document.createElement('div');
-                card.className = 'card';
-                card.onclick = () => verDetalle(id, data.nombre, data.precio, data.foto_url, data.descripcion, data.likes);
-
-                card.innerHTML = `
-                    <img src="${data.foto_url || 'https://via.placeholder.com/200'}" alt="${data.nombre}">
-                    <div class="card-info">
-                        <div class="card-info-header">
-                            <h3>${data.nombre}</h3>
-                            <span class="badge-likes">❤️ ${data.likes}</span>
-                        </div>
-                        <p class="precio">$${data.precio}</p>
-                    </div>
-                `;
-                contenedorDestacados.appendChild(card);
-            });
-        });
-}
-
-function renderizarCard(id, data) {
-    const card = document.createElement('div');
-    card.className = 'card';
-    card.onclick = () => verDetalle(id, data.nombre, data.precio, data.foto_url, data.descripcion, data.likes);
-    
-    card.innerHTML = `
-        <div class="card-img-container">
-            <img src="${data.foto_url || 'https://via.placeholder.com/200'}" alt="${data.nombre}">
-            <button class="btn-borrar-db" onclick="eliminarProducto('${id}', event)">🗑️</button>
-        </div>
-        <div class="card-info">
-            <div class="card-info-header">
-                <h3>${data.nombre}</h3>
-                <span>${data.likes > 0 ? '❤️ ' + data.likes : ''}</span>
-            </div>
-            <p class="precio">$${data.precio}</p>
-        </div>
-    `;
-    contenedor.appendChild(card);
-}
-
-// 5. MODAL DETALLE Y ACCIONES SOCIALES (Social Commerce)
-function verDetalle(id, nombre, precio, foto_url, descripcion, likes) {
-    productoActualId = id;
-    document.getElementById("modal-titulo").innerText = nombre;
-    document.getElementById("modal-precio").innerText = "$" + precio;
-    document.getElementById("modal-img").src = foto_url || 'https://via.placeholder.com/200';
-    
-    const descElement = document.querySelector(".descripcion");
-    if (descElement) descElement.innerText = descripcion || "Sin descripción disponible.";
-
-    if (btnLike) btnLike.innerText = (likes > 0) ? "❤️ " + likes : "🤍";
-    modal.style.display = "flex";
-}
-
-if (btnLike) {
-    btnLike.onclick = () => {
-        if (productoActualId) {
-            db.collection("productos").doc(productoActualId).update({
-                likes: firebase.firestore.FieldValue.increment(1)
-            });
-            btnLike.innerText = "❤️";
+        // Fallback si no existe el documento todavía
+        return {
+          username: fbUser.displayName || fbUser.email.split('@')[0],
+          role:     'user',
+          uid:      fbUser.uid,
+          email:    fbUser.email
+        };
         }
     };
 }
