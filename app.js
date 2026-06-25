@@ -70,141 +70,61 @@
           uid:      fbUser.uid,
           email:    fbUser.email
         };
+      }
+
+      // ── Configurar sesión solo por pestaña (no persiste al cerrar el navegador) ──
+      // Esto hace que Firebase NO restaure la sesión automáticamente al abrir la app.
+      // El usuario siempre tiene que ingresar manualmente con su email y contraseña.
+      setPersistence(auth, browserSessionPersistence).catch(e =>
+        console.warn('[Firebase] setPersistence error:', e)
+      );
+
+      // Solo usamos onAuthStateChanged para detectar cuando se cierra sesión externamente
+      onAuthStateChanged(auth, (fbUser) => {
+        if(!fbUser){
+          // Si Firebase cierra la sesión (ej: token expirado), limpiamos la app también
+          if(typeof getUser === 'function' && getUser()){
+            if(typeof setUser === 'function') setUser(null);
+            if(typeof showScreen === 'function') showScreen('screen-login');
+          }
         }
-    };
-}
+      });
 
-if (btnClose) btnClose.onclick = () => modal.style.display = "none";
-window.onclick = (e) => { if (e.target == modal) modal.style.display = "none"; };
+      // ── REGISTRO: crea el usuario en Auth + guarda perfil en Firestore ──
+      window.firebaseRegister = async (email, password, displayName) => {
+        // 1. Crear usuario en Firebase Authentication
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        const fbUser = cred.user;
 
-// 6. FLUJO DE COMPRA (Conversion Funnel)
-function agregarAlCarrito() {
-    const producto = todosLosProductos.find(p => p.id === productoActualId);
-    if (producto) {
-        carrito.push(producto);
-        localStorage.setItem('carrito', JSON.stringify(carrito));
-        actualizarVistaCarrito(); 
-        modal.style.display = "none";
-    }
-}
-
-function actualizarVistaCarrito() {
-    const lista = document.getElementById('lista-carrito');
-    const totalElemento = document.getElementById('precio-total');
-    if (!lista || !totalElemento) return;
-
-    lista.innerHTML = '';
-    let total = 0;
-
-    if (carrito.length === 0) {
-        lista.innerHTML = '<div class="carrito-vacio-msg"><p>Tu carrito está vacío 🛒</p></div>';
-        totalElemento.innerText = '$0';
-        return;
-    }
-
-    carrito.forEach((prod, index) => {
-        total += Number(prod.precio);
-        const item = document.createElement('div');
-        item.className = 'item-carrito';
-        item.innerHTML = `
-            <img src="${prod.foto_url || 'https://via.placeholder.com/200'}">
-            <div class="item-carrito-desc">
-                <h4>${prod.nombre}</h4>
-                <p>$${prod.precio}</p>
-            </div>
-            <button onclick="eliminarDelCarrito(${index})" class="btn-eliminar-item">🗑️</button>
-        `;
-        lista.appendChild(item);
-    });
-    totalElemento.innerText = `$${total}`;
-}
-
-function eliminarDelCarrito(index) {
-    carrito.splice(index, 1);
-    localStorage.setItem('carrito', JSON.stringify(carrito));
-    actualizarVistaCarrito();
-}
-
-function finalizarCompra() {
-    if (carrito.length === 0) {
-        alert("El carrito no contiene productos activos para procesar.");
-        return;
-    }
-    alert("¡Orden procesada con éxito! Gracias por tu compra.");
-    carrito = [];
-    localStorage.removeItem('carrito');
-    actualizarVistaCarrito();
-    cambiarPantalla('inicio');
-}
-
-// 7. MOTOR DE BUSQUEDA INTERNO (Internal Search Optimization)
-if (buscador) {
-    buscador.oninput = (e) => {
-        const texto = e.target.value.toLowerCase();
-        if (texto.length > 0) {
-            document.getElementById('view-inicio').style.display = 'none';
-            document.getElementById('view-productos').style.display = 'block';
+        // 2. Guardar displayName en Auth (opcional, para referencia)
+        if(displayName){
+          await updateProfile(fbUser, { displayName });
         }
-        const filtrados = todosLosProductos.filter(p => p.nombre.toLowerCase().includes(texto));
-        contenedor.innerHTML = '';
-        filtrados.forEach(p => renderizarCard(p.id, p));
-    };
-}
 
-// 8. GESTIÓN DE CATÁLOGO (Funciones de Administrador)
-function abrirModalAgregar() {
-    modalAgregar.style.display = 'flex';
-    if (categoriaActual) {
-        document.getElementById('add-categoria').value = categoriaActual;
+        // 3. Crear documento en Firestore colección "usuarios"
+        //    Estructura: { nombre, email, rol, creadoEn }
+        //    Para hacer admin: cambiá "rol" a "admin" desde Firestore Console
+        await setDoc(doc(db, 'usuarios', fbUser.uid), {
+          nombre:    displayName || email.split('@')[0],
+          email:     email,
+          rol:       'user',   // ← cambiá a "admin" en Firestore Console para dar acceso admin
+          creadoEn:  new Date().toISOString()
+        });
+
+        return cred;
+      };
+
+      // ── LOGIN: autentica y lee el rol desde Firestore ──
+      window.firebaseLogin = async (email, password) => {
+        const cred   = await signInWithEmailAndPassword(auth, email, password);
+        const profile = await loadUserProfile(cred.user);
+        // Adjuntar el perfil al resultado para que handleLogin lo use directamente
+        cred._profile = profile;
+        return cred;
+      };
+
+      // ── LOGOUT ──
+      window.firebaseLogout = () => signOut(auth);
+
+      console.log('[Firebase] ✓ Authentication + Firestore conectados');
     }
-}
-
-function cerrarModalAgregar() {
-    modalAgregar.style.display = 'none';
-    document.getElementById('add-nombre').value = '';
-    document.getElementById('add-precio').value = '';
-    document.getElementById('add-foto').value = '';
-    document.getElementById('add-desc').value = '';
-}
-
-function guardarNuevoProducto() {
-    const nombre = document.getElementById('add-nombre').value;
-    const precio = document.getElementById('add-precio').value;
-    const categoria = document.getElementById('add-categoria').value;
-    const foto = document.getElementById('add-foto').value;
-    const desc = document.getElementById('add-desc').value;
-
-    if (!nombre || !precio) {
-        alert("Por favor, complete los campos mandatorios (Nombre y Precio).");
-        return;
-    }
-
-    db.collection("productos").add({
-        nombre: nombre,
-        precio: Number(precio), 
-        categoria: categoria,
-        foto_url: foto || 'https://via.placeholder.com/200', 
-        descripcion: desc,
-        likes: 0 
-    })
-    .then(() => {
-        cerrarModalAgregar();
-    })
-    .catch((error) => console.error("Error al persistir el alta de producto:", error));
-}
-
-function eliminarProducto(id, event) {
-    event.stopPropagation(); // Evita el efecto burbuja en la UX
-
-    const confirmacion = confirm("¿Está seguro de eliminar definitivamente este ítem del catálogo general?");
-    if (confirmacion) {
-        db.collection("productos").doc(id).delete()
-        .catch((error) => console.error("Error de eliminación en base de datos:", error));
-    }
-}
-
-// INICIALIZACIÓN GLOBAL
-document.addEventListener("DOMContentLoaded", () => {
-    cargarProductos();
-    cargarDestacados();
-});
